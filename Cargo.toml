@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Andrei Pirskii pirskij@gmail.com"]
 description = "Fast and reliable registration tool for Bittensor network"
 license = "MIT"
-# repository = "https://github.com/pirskij/bittensor-quick-register"
+repository = "https://github.com/pirskij/bittensor-quick-register"
 keywords = ["bittensor", "blockchain", "registration", "mining", "cryptocurrency"]
 categories = ["command-line-utilities", "cryptography"]
  
