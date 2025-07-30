@@ -1,0 +1,60 @@
+[package]
+name = "bittensor-quick-register"
+version = "0.1.0"
+edition = "2024"
+authors = ["Andrei Pirskii pirskij@gmail.com"]
+description = "Fast and reliable registration tool for Bittensor network"
+license = "MIT"
+# repository = "https://github.com/pirskij/bittensor-quick-register"
+keywords = ["bittensor", "blockchain", "registration", "mining", "cryptocurrency"]
+categories = ["command-line-utilities", "cryptography"]
+ 
+[[bin]]
+name = "btreg"
+path = "src/main.rs"
+ 
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+jsonrpsee = { version = "0.25.1", features = ["client"] }
+sp-core = "37.0.0"
+sp-keyring = "42.0.0"
+codec = { package = "parity-scale-codec", version = "3.0" }
+scale-info = "2.0"
+primitive-types = "0.13.1"
+hex = "0.4"
+sha2 = "0.10"
+indicatif = "0.18.0"
+colored = "3.0.0"
+chrono = { version = "0.4", features = ["serde"] }
+env_logger = "0.11.8"
+log = "0.4"
+ 
+[dev-dependencies]
+tokio-test = "0.4"
+ 
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+ 
+[profile.release-fast]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+ 
+# Fast debug build
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+ 
+# Optimized debug build
+[profile.dev-optimized]
+inherits = "dev"
+opt-level = 2
