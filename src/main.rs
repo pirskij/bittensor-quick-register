@@ -23,69 +23,10 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
-
-// Дополним CLI с правильными commands
-impl Cli {
-    fn parse() -> Self {
-        use clap::Parser;
-        let mut cli = <Cli as Parser>::parse();
-        
-        // Parse subcommands
-        let matches = clap::Command::new("bittensor-quick-register")
-            .subcommand_required(true)
-            .subcommand(
-                clap::Command::new("register")
-                    .about("Register to a subnet")
-                    .arg(clap::Arg::new("subnet").short('s').long("subnet").required(true))
-                    .arg(clap::Arg::new("wallet").short('w').long("wallet").required(true))
-                    .arg(clap::Arg::new("hotkey").short('H').long("hotkey").required(true))
-                    .arg(clap::Arg::new("burn_amount").long("burn-amount"))
-            )
-            .subcommand(
-                clap::Command::new("status")
-                    .about("Check registration status")
-                    .arg(clap::Arg::new("subnet").short('s').long("subnet").required(true))
-                    .arg(clap::Arg::new("hotkey").short('H').long("hotkey").required(true))
-            )
-            .subcommand(
-                clap::Command::new("info")
-                    .about("Show subnet information")
-                    .arg(clap::Arg::new("subnet").short('s').long("subnet").required(true))
-            )
-            .subcommand(
-                clap::Command::new("estimate")
-                    .about("Estimate registration costs")
-                    .arg(clap::Arg::new("subnet").short('s').long("subnet").required(true))
-            )
-            .get_matches();
-            
-        cli.command = match matches.subcommand() {
-            Some(("register", sub_m)) => Commands::Register {
-                subnet: sub_m.get_one::<String>("subnet").unwrap().parse().unwrap(),
-                wallet: sub_m.get_one::<String>("wallet").unwrap().clone(),
-                hotkey: sub_m.get_one::<String>("hotkey").unwrap().clone(),
-                burn_amount: sub_m.get_one::<String>("burn_amount").map(|s| s.parse().unwrap()),
-            },
-            Some(("status", sub_m)) => Commands::Status {
-                subnet: sub_m.get_one::<String>("subnet").unwrap().parse().unwrap(),  
-                hotkey: sub_m.get_one::<String>("hotkey").unwrap().clone(),
-            },
-            Some(("info", sub_m)) => Commands::SubnetInfo {
-                subnet: sub_m.get_one::<String>("subnet").unwrap().parse().unwrap(),
-            },
-            Some(("estimate", sub_m)) => Commands::EstimateCost {
-                subnet: sub_m.get_one::<String>("subnet").unwrap().parse().unwrap(),
-            },
-            _ => unreachable!(),
-        };
-        
-        cli
-    }
-}
  
 #[derive(Subcommand)]
 enum Commands {
-    /// Register to a subnet using PoW or burn registration
+    /// Register to a subnet using burn registration
     Register {
         #[arg(short, long)]
         subnet: u16,

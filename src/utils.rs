@@ -34,10 +34,14 @@ pub fn format_hash_rate(attempts: u64, duration: Duration) -> String {
 
 pub fn format_account_short(account: &AccountId32) -> String {
     let ss58 = account.to_ss58check();
+    format_ss58_short(&ss58)
+}
+
+pub fn format_ss58_short(ss58: &str) -> String {
     if ss58.len() > 16 {
         format!("{}...{}", &ss58[..8], &ss58[ss58.len()-8..])
     } else {
-        ss58
+        ss58.to_string()
     }
 }
 

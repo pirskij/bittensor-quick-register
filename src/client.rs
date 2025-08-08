@@ -24,18 +24,28 @@ pub struct RegistrationData {
  
 #[derive(Debug, Clone)]
 pub struct SubnetInfo {
+    pub netuid: u16,
     pub difficulty: U256,
     pub immunity_period: u16,
     pub min_allowed_weights: u16,
     pub max_weight_limit: u16,
+    pub max_allowed_validators: u16,
+    pub max_n: u16, // max neurons
     pub tempo: u16,
     pub burn: u64, // Burned registration cost in RAO
-    pub owner: AccountId32,
-    pub max_allowed_uids: u16,
-    pub network_modality: u16,
+    pub owner_ss58: String, // Owner as SS58 address
+    pub emission_value: u64,
+    pub rho: u16,
+    pub kappa: u16,
+    pub scaling_law_power: u16,
+    pub subnetwork_n: u16, // Current number of registered neurons
+    pub blocks_since_epoch: u64,
+    pub modality: u16,
+    // Legacy fields for backward compatibility
+    pub network_modality: u16, // Same as modality
     pub network_connect: Vec<u16>,
-    pub emission_values: u64,
-    pub registered_neurons: u16, // Текущее количество зарегистрированных нейронов
+    pub max_allowed_uids: u16, // Same as max_n
+    pub registered_neurons: u16, // Same as subnetwork_n
 }
  
 #[derive(Debug, Serialize, Deserialize)]
@@ -148,44 +158,61 @@ impl BittensorClient {
     pub async fn get_subnet_info(&self, netuid: u16) -> Result<SubnetInfo> {
         println!("🔍 Fetching subnet {} information from blockchain...", netuid);
 
-        // Getting network difficulty
-        let difficulty: Option<U256> = self.client
-            .request("subtensorModule_difficulty", rpc_params![netuid])
-            .await
-            .context("Failed to get network difficulty")?;
- 
-        let difficulty = difficulty.ok_or_else(|| anyhow!("Network {} does not exist", netuid))?;
+        // Debug: Let's see what the storage key looks like
+        let storage_key: String = self.encode_bittensor_storage_key("SubnetworkN", &[netuid]);
+        println!("🐛 DEBUG: Storage key for SubnetworkN[{}]: {}", netuid, storage_key);
 
-        // Getting other network parameters
-        let tempo: u16 = self.client
-            .request("subtensorModule_tempo", rpc_params![netuid])
-            .await
-            .unwrap_or(99);
- 
-        let immunity_period: u16 = self.client
-            .request("subtensorModule_immunityPeriod", rpc_params![netuid])
-            .await
-            .unwrap_or(7200);
- 
-        let min_allowed_weights: u16 = self.client
-            .request("subtensorModule_minAllowedWeights", rpc_params![netuid])
-            .await
-            .unwrap_or(8);
- 
-        let max_weight_limit: u16 = self.client
-            .request("subtensorModule_maxWeightLimit", rpc_params![netuid])
-            .await
-            .unwrap_or(1000);
- 
-        let burn: u64 = self.client
-            .request("subtensorModule_burn", rpc_params![netuid])
-            .await
-            .unwrap_or(1_000_000_000); // 1 TAO в rao
- 
-        let owner: AccountId32 = self.client
-            .request("subtensorModule_subnetOwner", rpc_params![netuid])
-            .await
-            .unwrap_or_else(|_| AccountId32::new([0u8; 32]));
+        // Try to get network parameters. If any core parameter doesn't exist, subnet doesn't exist.
+        // Start with SubnetworkN which should exist for any active subnet
+        let subnetwork_n_raw = self.get_bittensor_storage("SubnetworkN", &[netuid]).await?;
+        println!("🐛 DEBUG: Raw storage result: {:?}", subnetwork_n_raw);
+        
+        if subnetwork_n_raw.is_none() {
+            // Let's also try to get the total subnet count to see if we can get any storage at all
+            let total_networks_key = self.encode_bittensor_storage_key("TotalNetworks", &[]);
+            println!("🐛 DEBUG: Trying TotalNetworks storage key: {}", total_networks_key);
+            let total_networks = self.get_bittensor_storage("TotalNetworks", &[]).await?;
+            println!("🐛 DEBUG: TotalNetworks result: {:?}", total_networks);
+            
+            if let Some(total_bytes) = total_networks {
+                let total = u16::from_le_bytes([total_bytes[0], total_bytes[1]]);
+                return Err(anyhow!(
+                    "Network {} does not exist. Total networks on chain: {}. Try checking which specific subnet IDs are active.",
+                    netuid, total
+                ));
+            }
+            
+            return Err(anyhow!("Network {} does not exist", netuid));
+        }
+        
+        let subnetwork_n = u16::from_le_bytes([
+            subnetwork_n_raw.as_ref().unwrap()[0],
+            subnetwork_n_raw.as_ref().unwrap()[1]
+        ]);
+        
+        if subnetwork_n == 0 {
+            return Err(anyhow!("Network {} does not exist (has 0 neurons)", netuid));
+        }
+
+        // Get network parameters using correct Bittensor storage keys
+        let difficulty = self.get_bittensor_u256("Difficulty", &[netuid]).await?;
+        let tempo = self.get_bittensor_u16("Tempo", &[netuid]).await?;
+        let immunity_period = self.get_bittensor_u16("ImmunityPeriod", &[netuid]).await?;
+        let min_allowed_weights = self.get_bittensor_u16("MinAllowedWeights", &[netuid]).await?;
+        let max_weight_limit = self.get_bittensor_u16("MaxWeightsLimit", &[netuid]).await?;
+        let max_allowed_validators = self.get_bittensor_u16("MaxAllowedValidators", &[netuid]).await?;
+        let max_n = self.get_bittensor_u16("MaxAllowedUids", &[netuid]).await?;
+        let burn = self.get_bittensor_u64("Burn", &[netuid]).await?;
+        let owner_account = self.get_bittensor_account("SubnetOwner", &[netuid]).await?;
+        let owner_ss58 = owner_account.to_ss58check();
+        let modality = self.get_bittensor_u16("NetworkModality", &[netuid]).await?;
+        let emission_value = self.get_bittensor_u64("EmissionValues", &[netuid]).await?;
+        let rho = self.get_bittensor_u16("Rho", &[netuid]).await?;
+        let kappa = self.get_bittensor_u16("Kappa", &[netuid]).await?;
+        let scaling_law_power = self.get_bittensor_u16("ScalingLawPower", &[netuid]).await?;
+        let blocks_since_epoch = self.get_bittensor_u64("BlocksSinceLastStep", &[netuid]).await?;
+
+        let current_block = self.get_current_block().await?;
  
         println!("📋 Subnet {} info retrieved:", netuid);
         println!("   Difficulty: {}", difficulty);
@@ -193,58 +220,282 @@ impl BittensorClient {
         println!("   Immunity period: {}", immunity_period);
         println!("   Min allowed weights: {}", min_allowed_weights);
         println!("   Registration burn: {} RAO", burn);
+        println!("   Registered neurons: {}", subnetwork_n);
+        println!("   Current block: {}", current_block);
  
         Ok(SubnetInfo {
+            netuid,
             difficulty,
             immunity_period,
             min_allowed_weights,
             max_weight_limit,
+            max_allowed_validators,
+            max_n,
             tempo,
             burn,
-            owner,
-            max_allowed_uids: netuid,
-            network_modality: 0,
+            owner_ss58,
+            emission_value,
+            rho,
+            kappa,
+            scaling_law_power,
+            subnetwork_n,
+            blocks_since_epoch,
+            modality,
+            // Legacy fields for backward compatibility
+            network_modality: modality,
             network_connect: vec![],
-            emission_values: 0,
-            registered_neurons: 0, // Current number of registered neurons
+            max_allowed_uids: max_n,
+            registered_neurons: subnetwork_n,
         })
     }
 
+    // Bittensor-specific storage key generation
+    fn encode_bittensor_storage_key(&self, storage_name: &str, keys: &[u16]) -> String {
+        use sp_core::twox_128;
+        
+        // Bittensor uses "SubtensorModule" as the pallet name
+        let pallet_hash = twox_128(b"SubtensorModule");
+        let storage_hash = twox_128(storage_name.as_bytes());
+        
+        let mut final_key = Vec::new();
+        final_key.extend_from_slice(&pallet_hash);
+        final_key.extend_from_slice(&storage_hash);
+        
+        // For map storage items with Identity hasher, use the key directly (no hashing)
+        // SubnetworkN uses Identity hasher according to the source code
+        if !keys.is_empty() {
+            for &key in keys {
+                // NetUid is u16, encode as little-endian bytes
+                final_key.extend_from_slice(&key.to_le_bytes());
+            }
+        }
+        
+        format!("0x{}", hex::encode(final_key))
+    }
+
+    // Get raw storage data from Bittensor
+    async fn get_bittensor_storage(&self, storage_name: &str, keys: &[u16]) -> Result<Option<Vec<u8>>> {
+        let storage_key = self.encode_bittensor_storage_key(storage_name, keys);
+        
+        let result: Option<String> = self.client
+            .request("state_getStorage", rpc_params![storage_key])
+            .await
+            .context(format!("Failed to get {} from SubtensorModule", storage_name))?;
+            
+        if let Some(hex_data) = result {
+            let bytes = hex::decode(&hex_data[2..])
+                .context("Invalid hex data in storage")?;
+            Ok(Some(bytes))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // Get and decode storage data from Bittensor
+    async fn get_bittensor_storage_decoded<T>(&self, storage_name: &str, keys: &[u16]) -> Result<T> 
+    where 
+        T: codec::Decode
+    {
+        if let Some(bytes) = self.get_bittensor_storage(storage_name, keys).await? {
+            let value = T::decode(&mut &bytes[..])
+                .map_err(|e| anyhow!("Failed to decode {}: {:?}", storage_name, e))?;
+            Ok(value)
+        } else {
+            Err(anyhow!("Storage key not found: {}", storage_name))
+        }
+    }
+
+    // Specialized getters for different types
+    async fn get_bittensor_u16(&self, storage_name: &str, keys: &[u16]) -> Result<u16> {
+        self.get_bittensor_storage_decoded(storage_name, keys).await.or_else(|_| Ok(0u16))
+    }
+
+    async fn get_bittensor_u64(&self, storage_name: &str, keys: &[u16]) -> Result<u64> {
+        self.get_bittensor_storage_decoded(storage_name, keys).await.or_else(|_| Ok(0u64))
+    }
+
+    async fn get_bittensor_u256(&self, storage_name: &str, keys: &[u16]) -> Result<U256> {
+        self.get_bittensor_storage_decoded(storage_name, keys).await.or_else(|_| Ok(U256::zero()))
+    }
+
+    async fn get_bittensor_account(&self, storage_name: &str, keys: &[u16]) -> Result<AccountId32> {
+        self.get_bittensor_storage_decoded(storage_name, keys).await.or_else(|_| Ok(AccountId32::new([0u8; 32])))
+    }
+
+    // Specialized method for account-based storage keys
+    async fn get_bittensor_storage_with_account(&self, storage_name: &str, netuid: u16, account: &AccountId32) -> Result<Option<Vec<u8>>> {
+        use sp_core::{blake2_256, twox_128};
+        
+        let pallet_hash = twox_128(b"SubtensorModule");
+        let storage_hash = twox_128(storage_name.as_bytes());
+        
+        let mut final_key = Vec::new();
+        final_key.extend_from_slice(&pallet_hash);
+        final_key.extend_from_slice(&storage_hash);
+        
+        // Create the composite key for double map (netuid, account)
+        let mut map_key = Vec::new();
+        map_key.extend_from_slice(&netuid.to_le_bytes());
+        map_key.extend_from_slice(account.as_ref());
+        
+        let key_hash = blake2_256(&map_key);
+        final_key.extend_from_slice(&key_hash);
+        
+        let storage_key = format!("0x{}", hex::encode(final_key));
+        
+        let result: Option<String> = self.client
+            .request("state_getStorage", rpc_params![storage_key])
+            .await
+            .context(format!("Failed to get {} from SubtensorModule", storage_name))?;
+            
+        if let Some(hex_data) = result {
+            let bytes = hex::decode(&hex_data[2..])
+                .context("Invalid hex data in storage")?;
+            Ok(Some(bytes))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // Helper method to encode storage keys (legacy - keep for compatibility)
+    fn encode_storage_key(&self, _module: &str, storage: &str, keys: &[u16]) -> Result<String> {
+        // Use the new Bittensor-specific method
+        Ok(self.encode_bittensor_storage_key(storage, keys))
+    }
+
+    // Generic storage value getter
+    async fn get_storage_value<T>(&self, module: &str, storage: &str, keys: &[u16]) -> Result<T> 
+    where 
+        T: codec::Decode + Default
+    {
+        let storage_key = self.encode_storage_key(module, storage, keys)?;
+        
+        let result: Option<String> = self.client
+            .request("state_getStorage", rpc_params![storage_key])
+            .await
+            .context(format!("Failed to get {} from {}", storage, module))?;
+            
+        if let Some(hex_data) = result {
+            let bytes = hex::decode(&hex_data[2..])
+                .context("Invalid hex data in storage")?;
+            let value = T::decode(&mut &bytes[..])
+                .map_err(|_| anyhow!("Failed to decode storage value"))?;
+            Ok(value)
+        } else {
+            Ok(T::default())
+        }
+    }
+
+    // Raw storage getter for custom decoding
+    async fn get_storage_raw(&self, module: &str, storage: &str, keys: &[u16]) -> Result<Vec<u8>> {
+        let storage_key = self.encode_storage_key(module, storage, keys)?;
+        
+        let result: Option<String> = self.client
+            .request("state_getStorage", rpc_params![storage_key])
+            .await
+            .context(format!("Failed to get {} from {}", storage, module))?;
+            
+        if let Some(hex_data) = result {
+            let bytes = hex::decode(&hex_data[2..])
+                .context("Invalid hex data in storage")?;
+            Ok(bytes)
+        } else {
+            Err(anyhow!("Storage key not found"))
+        }
+    }
+
+    // Checking neuron registration
     // Checking neuron registration
     pub async fn check_registration(&self, netuid: u16, hotkey: &AccountId32) -> Result<Option<NeuronInfo>> {
         println!("🔍 Checking registration status for hotkey: {}", hotkey);
 
-        // Getting neuron UID by hotkey
-        let uid: Option<u16> = self.client
-            .request("subtensorModule_uids", rpc_params![netuid, hotkey])
-            .await
-            .context("Failed to query neuron UID")?;
- 
-        let uid = match uid {
-            Some(uid) => uid,
-            None => {
+        // Get UID for hotkey using Bittensor storage
+        let uid_data = self.get_bittensor_storage_with_account("Uids", netuid, hotkey).await?;
+        
+        let uid = match uid_data {
+            Some(bytes) if bytes.len() >= 2 => {
+                u16::from_le_bytes([bytes[0], bytes[1]])
+            }
+            _ => {
                 println!("❌ Hotkey not registered in subnet {}", netuid);
                 return Ok(None);
             }
         };
- 
-        // Getting detailed neuron information
-        let neuron_info: Option<NeuronInfo> = self.client
-            .request("subtensorModule_neurons", rpc_params![netuid, uid])
-            .await
-            .context("Failed to get neuron info")?;
- 
-        match neuron_info {
-            Some(info) => {
+
+        // Get neuron info using UID - this requires a different storage key format
+        let neuron_data = self.get_bittensor_storage("Neurons", &[netuid, uid]).await?;
+        
+        match neuron_data {
+            Some(bytes) => {
+                // For now, create a simplified neuron info since full decoding is complex
+                // In a real implementation, you'd need to properly decode the neuron struct
+                let neuron_info = NeuronInfo {
+                    hotkey: hotkey.clone(),
+                    coldkey: AccountId32::new([0u8; 32]), // Would need proper decoding
+                    uid,
+                    netuid,
+                    active: true,
+                    axon_info: AxonInfo::default(),
+                    prometheus_info: PrometheusInfo::default(),
+                    stake: vec![],
+                    rank: 0,
+                    emission: 0,
+                    incentive: 0,
+                    consensus: 0,
+                    trust: 0,
+                    validator_trust: 0,
+                    dividends: 0,
+                    last_update: 0,
+                    validator_permit: false,
+                    weights: vec![],
+                    bonds: vec![],
+                    pruning_score: 0,
+                };
+                
                 println!("✅ Neuron registered:");
                 println!("   UID: {}", uid);
-                println!("   Hotkey: {}", info.hotkey);
-                println!("   Coldkey: {}", info.coldkey);
-                println!("   Active: {}", info.active);
-                Ok(Some(info))
+                println!("   Hotkey: {}", hotkey);
+                println!("   Active: {}", neuron_info.active);
+                println!("   Raw data length: {} bytes", bytes.len());
+                Ok(Some(neuron_info))
             }
-            None => Ok(None),
+            None => {
+                println!("❌ No neuron data found for UID {}", uid);
+                Ok(None)
+            }
         }
+    }
+
+    // Helper method to encode storage keys with hotkey
+    fn encode_hotkey_storage_key(&self, module: &str, storage: &str, netuid: u16, hotkey: &AccountId32) -> Result<String> {
+        use sp_core::blake2_256;
+        
+        let module_hash = blake2_256(module.as_bytes());
+        let storage_hash = blake2_256(storage.as_bytes());
+        
+        let mut key = Vec::new();
+        key.extend_from_slice(&module_hash);
+        key.extend_from_slice(&storage_hash);
+        key.extend_from_slice(&netuid.to_le_bytes());
+        key.extend_from_slice(hotkey.as_ref());
+        
+        Ok(format!("0x{}", hex::encode(key)))
+    }
+
+    // Helper method to encode storage keys with UID
+    fn encode_uid_storage_key(&self, module: &str, storage: &str, netuid: u16, uid: u16) -> Result<String> {
+        use sp_core::blake2_256;
+        
+        let module_hash = blake2_256(module.as_bytes());
+        let storage_hash = blake2_256(storage.as_bytes());
+        
+        let mut key = Vec::new();
+        key.extend_from_slice(&module_hash);
+        key.extend_from_slice(&storage_hash);
+        key.extend_from_slice(&netuid.to_le_bytes());
+        key.extend_from_slice(&uid.to_le_bytes());
+        
+        Ok(format!("0x{}", hex::encode(key)))
     }
 
     // Getting current block number

@@ -219,15 +219,21 @@ impl QuickRegister {
         
         println!("\n📊 Subnet {} Details:", netuid);
         println!("═══════════════════════════════════════");
-        println!("   Registered neurons: {}/{}", subnet_info.registered_neurons, subnet_info.max_allowed_uids);
+        println!("   Registered neurons: {}/{}", subnet_info.subnetwork_n, subnet_info.max_n);
         println!("   Registration difficulty: {}", subnet_info.difficulty);
         println!("   Burn cost: {}", utils::format_tao(subnet_info.burn));
         println!("   Tempo: {} blocks", subnet_info.tempo);
         println!("   Immunity period: {} blocks", subnet_info.immunity_period);
         println!("   Min allowed weights: {}", subnet_info.min_allowed_weights);
         println!("   Max weight limit: {}", subnet_info.max_weight_limit);
-        println!("   Owner: {}", utils::format_account_short(&subnet_info.owner));
-        println!("   Network modality: {}", subnet_info.network_modality);
+        println!("   Max allowed validators: {}", subnet_info.max_allowed_validators);
+        println!("   Owner: {}", utils::format_ss58_short(&subnet_info.owner_ss58));
+        println!("   Network modality: {}", subnet_info.modality);
+        println!("   Emission value: {}", subnet_info.emission_value);
+        println!("   Rho: {}", subnet_info.rho);
+        println!("   Kappa: {}", subnet_info.kappa);
+        println!("   Scaling law power: {}", subnet_info.scaling_law_power);
+        println!("   Blocks since epoch: {}", subnet_info.blocks_since_epoch);
         
         // Показываем статистику регистраций
         let current_block = self.client.get_current_block().await?;

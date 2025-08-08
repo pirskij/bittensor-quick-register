@@ -1,0 +1,10 @@
+{
+    "rust-analyzer.server.path": "rust-analyzer",
+    "rust-analyzer.checkOnSave": true,
+    "rust-analyzer.check.command": "check",
+    "rust-analyzer.cargo.buildScripts.enable": true,
+    "rust-analyzer.procMacro.enable": true,
+    "files.watcherExclude": {
+        "**/target/**": true
+    }
+}
