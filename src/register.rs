@@ -47,8 +47,8 @@ impl QuickRegister {
     ) -> Result<()> {
         println!("{}", "🚀 Starting Bittensor Registration".bright_cyan().bold());
         println!("═══════════════════════════════════════");
-        
-        // 1. Загружаем ключи
+
+        // 1. Loading keys
         let coldkey_pair = key_utils::load_keypair_from_file(wallet_path)
             .context("Failed to load wallet/coldkey")?;
         let hotkey_account = key_utils::account_id_from_string(hotkey_path)
@@ -58,21 +58,21 @@ impl QuickRegister {
         println!("🔑 Keys loaded:");
         println!("   Coldkey: {}", coldkey_account.to_ss58check());
         println!("   Hotkey: {}", hotkey_account.to_ss58check());
- 
-        // 2. Проверяем, не зарегистрированы ли уже
+
+        // 2. Checking if already registered
         if let Some(neuron) = self.client.check_registration(netuid, &hotkey_account).await? {
             println!("✅ Already registered in subnet {} with UID: {}", netuid, neuron.uid);
             return Ok(());
         }
- 
-        // 3. Получаем информацию о подсети
-        let subnet_info = self.client.get_subnet_info(netuid).await?;
-        
-        // 4. Получаем текущий номер блока
+
+        // 3. Getting subnet information
+        let subnet_info = self.client.get_subnet_info(netuid, false).await?;
+
+        // 4. Getting the current block number
         let current_block = self.client.get_current_block().await?;
         println!("📦 Current block: {}", current_block);
- 
-        // 6. Выполняем регистрацию выбранным методом
+
+        // 6. Performing registration using the selected method
         let burn_cost = burn_amount.unwrap_or(subnet_info.burn);
         let registration_data = self.perform_burn_registration(
                     netuid,
@@ -81,8 +81,8 @@ impl QuickRegister {
                     current_block,
                     burn_cost,
                 ).await?;
- 
-        // 7. Отправляем регистрацию
+
+        // 7. Sending registration
         let tx_hash = self.client.submit_burned_registration(&registration_data, &coldkey_pair).await?;
         
         println!("\n🎉 Registration completed successfully!");
@@ -90,14 +90,14 @@ impl QuickRegister {
         println!("   Subnet: {}", netuid);
         println!("   Hotkey: {}", hotkey_account.to_ss58check());
         println!("   Coldkey: {}", coldkey_account.to_ss58check());
- 
-        // 8. Проверяем окончательную регистрацию
+
+        // 8. Verifying final registration
         self.verify_registration(netuid, &hotkey_account).await?;
  
         Ok(())
     }
-    
-    // Burn регистрация
+
+    // Burn registration
     async fn perform_burn_registration(
         &self,
         netuid: u16,
@@ -108,8 +108,8 @@ impl QuickRegister {
     ) -> Result<RegistrationData> {
         println!("\n🔥 Preparing burn registration...");
         println!("   Burn amount: {}", utils::format_tao(burn_amount));
-        
-        // Проверяем баланс
+
+        // Checking balance
         let balance = self.client.get_account_balance(coldkey_account).await?;
         if balance < burn_amount {
             return Err(anyhow!("Insufficient balance. Required: {}, Available: {}", 
@@ -128,8 +128,8 @@ impl QuickRegister {
             block_number: current_block,
         })
     }
-    
-    // Проверка успешности регистрации
+
+    // Verification of registration success
     async fn verify_registration(&self, netuid: u16, hotkey_account: &AccountId32) -> Result<()> {
         println!("\n🔍 Verifying registration...");
         
@@ -156,13 +156,12 @@ impl QuickRegister {
         Ok(())
     }
     
-    // Оценка стоимости регистрации
     pub async fn estimate_registration_cost(&self, netuid: u16) -> Result<()> {
         println!("💰 Estimating registration costs for subnet {}...", netuid);
         println!("═══════════════════════════════════════════════════");
-        
-        let subnet_info = self.client.get_subnet_info(netuid).await?;
-        
+
+        let subnet_info = self.client.get_subnet_info(netuid, false).await?;
+
         println!("\n📊 Cost Analysis:");
         println!("┌─ Burn Registration (Instant)");
         println!("│  ├─ Cost: {}", utils::format_tao(subnet_info.burn));
@@ -190,9 +189,9 @@ impl QuickRegister {
                 println!("   Emission: {}", neuron.emission);
                 println!("   Last update: block {}", neuron.last_update);
                 println!("   Validator permit: {}", neuron.validator_permit);
-                
-                // Показываем дополнительную статистику
-                let subnet_info = self.client.get_subnet_info(netuid).await?;
+
+                // Show additional statistics
+                let subnet_info = self.client.get_subnet_info(netuid, false).await?;
                 println!("\n📈 Subnet Statistics:");
                 println!("   Total neurons: {}/{}", subnet_info.registered_neurons, subnet_info.max_allowed_uids);
                 println!("   Registration difficulty: {}", subnet_info.difficulty);
@@ -201,9 +200,9 @@ impl QuickRegister {
             None => {
                 println!("❌ Hotkey {} is NOT registered in subnet {}", 
                     hotkey_account.to_ss58check(), netuid);
-                    
-                // Показываем информацию о возможной регистрации
-                let subnet_info = self.client.get_subnet_info(netuid).await?;
+
+                // Show possible registration information
+                let subnet_info = self.client.get_subnet_info(netuid, false).await?;
                 println!("\n💡 Registration options:");
                 println!("   Burn cost: {}", utils::format_tao(subnet_info.burn));
             }
@@ -215,7 +214,7 @@ impl QuickRegister {
     pub async fn show_subnet_info(&self, netuid: u16) -> Result<()> {
         println!("📋 Fetching subnet {} information...", netuid);
         
-        let subnet_info = self.client.get_subnet_info(netuid).await?;
+        let subnet_info = self.client.get_subnet_info(netuid, true).await?;
         
         println!("\n📊 Subnet {} Details:", netuid);
         println!("═══════════════════════════════════════");
@@ -234,8 +233,8 @@ impl QuickRegister {
         println!("   Kappa: {}", subnet_info.kappa);
         println!("   Scaling law power: {}", subnet_info.scaling_law_power);
         println!("   Blocks since epoch: {}", subnet_info.blocks_since_epoch);
-        
-        // Показываем статистику регистраций
+
+        // Show registration statistics
         let current_block = self.client.get_current_block().await?;
         
         println!("\n⏱️ Registration Estimates:");
@@ -244,8 +243,8 @@ impl QuickRegister {
         
         Ok(())
     }
- 
-    // Массовый мониторинг нескольких нейронов
+
+    // Massive monitoring of multiple neurons
     pub async fn monitor_multiple_neurons(&self, registrations: Vec<(u16, String)>) -> Result<()> {
         println!("👀 Monitoring {} registration(s)...", registrations.len());
         println!("═══════════════════════════════════════════");
@@ -263,8 +262,8 @@ impl QuickRegister {
         
         Ok(())
     }
-    
-    // Автоматическая регистрация с retry логикой
+
+    // Automatic registration with retry logic
     pub async fn auto_register_with_retry(
         &self,
         netuid: u16,
@@ -316,7 +315,7 @@ impl QuickRegister {
         println!("├─────┼─────────────┼──────────┼─────────────┼──────────────┤");
         
         for netuid in main_subnets {
-            match self.client.get_subnet_info(netuid).await {
+            match self.client.get_subnet_info(netuid, false).await {
                 Ok(subnet_info) => {
                     active_subnets += 1;
                     total_neurons += subnet_info.registered_neurons as u32;
@@ -362,7 +361,7 @@ impl QuickRegister {
     pub async fn export_config(&self, netuid: u16, output_path: &str) -> Result<()> {
         println!("📄 Exporting configuration for subnet {}...", netuid);
         
-        let subnet_info = self.client.get_subnet_info(netuid).await?;
+        let subnet_info = self.client.get_subnet_info(netuid,  true).await?;
         
         let config = serde_json::json!({
             "subnet_id": netuid,
@@ -444,6 +443,35 @@ impl QuickRegister {
         println!("\n🎉 Batch operations completed!");
         Ok(())
     }
+    
+    // Check account balance
+    pub async fn check_account_balance(&self, account_address: &str) -> Result<()> {
+        println!("💰 Checking account balance...");
+        
+        // Parse the account address using SS58 codec
+        let account = AccountId32::from_ss58check(account_address)
+            .map_err(|e| anyhow::anyhow!("Invalid SS58 account address format: {:?}. Address: {}", e, account_address))?;
+            
+        // Get account info with debug output
+        match self.client.get_account_balance(&account).await {
+            Ok(balance) => {
+                println!("✅ Account balance retrieved successfully!");
+                println!("💰 Address: {}", account_address);
+                println!("💰 Balance: {} RAO", balance);
+                println!("💰 Balance: {:.6} TAO", balance as f64 / 1_000_000_000.0);
+                
+                if balance == 0 {
+                    println!("ℹ️ Note: Account has zero balance or doesn't exist on-chain");
+                }
+            }
+            Err(e) => {
+                println!("❌ Failed to get account balance: {}", e);
+                return Err(e);
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -454,6 +482,6 @@ mod tests {
     async fn test_client_creation() {
         let result = QuickRegister::new("wss://test.example.com".to_string()).await;
         // Will not collected in test environment but structure should creates
-        assert!(result.is_err()); // Ожидаем ошибку соединения
+        assert!(result.is_err());
     }
 }

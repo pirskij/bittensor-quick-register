@@ -94,6 +94,12 @@ enum Commands {
         #[arg(short, long)]
         config: String,
     },
+    
+    /// Check account balance
+    Balance {
+        #[arg(short, long)]
+        account: String,
+    },
 }
  
 #[tokio::main]
@@ -113,7 +119,7 @@ async fn main() -> Result<()> {
         Commands::Register { 
             subnet, wallet, hotkey, burn_amount 
         } => {
-            let register_client = QuickRegister::new(cli.rpc_url).await?;
+            let register_client: QuickRegister = QuickRegister::new(cli.rpc_url).await?;
             register_client.register_to_subnet(
                 subnet, &wallet, &hotkey, burn_amount
             ).await?;
@@ -176,6 +182,11 @@ async fn main() -> Result<()> {
             let register_client = QuickRegister::new(cli.rpc_url).await?;
             register_client.execute_batch_operations(&config).await?;
         }
+        
+        Commands::Balance { account } => {
+            let register_client = QuickRegister::new(cli.rpc_url).await?;
+            register_client.check_account_balance(&account).await?;
+        }
     }
     
     Ok(())
@@ -185,7 +196,7 @@ fn print_banner() {
     println!("{}", r#"
  ╔═══════════════════════════════════════════════════════════╗
  ║                                                           ║
- ║    🚀 Bittensor Quick Register v0.1.0                     ║
+ ║    🚀 Bittensor Quick Register v0.2.0                     ║
  ║    ⚡ Fast • Reliable • Burn Registration                 ║
  ║                                                           ║
  ╚═══════════════════════════════════════════════════════════╝

@@ -1,11 +1,11 @@
 use jsonrpsee::{core::client::ClientT, rpc_params, ws_client::WsClientBuilder};
 use primitive_types::{H256, U256};
-use codec::Encode;
+use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
 use sp_core::{
     crypto::{AccountId32, Ss58Codec},
     sr25519::{Pair as Sr25519Pair},
-    Pair,
+    Pair, blake2_128, twox_128,
 };
 use std::{
     str::FromStr,
@@ -120,17 +120,23 @@ impl Default for PrometheusInfo {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Decode)]
 struct AccountInfo {
+    nonce: u32,
+    consumers: u32,
+    providers: u32,
+    sufficients: u32,
     data: AccountData,
-    nonce: u64,
 }
 
-#[derive(Debug, Deserialize)]
+// ExtraFlags struct for account flags (removed as not needed for original structure)
+
+#[derive(Debug, Decode, Encode)]
 struct AccountData {
-    free: u64,
-    reserved: u64,
-    frozen: u64,
+    free: u128,
+    reserved: u128,
+    frozen: u128,       // Modern Substrate uses "frozen" instead of misc_frozen/fee_frozen
+    flags: u128,        // ExtraFlags - additional account metadata
 }
 
 pub struct BittensorClient {
@@ -155,25 +161,27 @@ impl BittensorClient {
     }
  
     // Getting subnet information
-    pub async fn get_subnet_info(&self, netuid: u16) -> Result<SubnetInfo> {
-        println!("🔍 Fetching subnet {} information from blockchain...", netuid);
+    pub async fn get_subnet_info(&self, netuid: u16, show_info: bool) -> Result<SubnetInfo> {
+        if show_info {
+            println!("🔍 Fetching subnet {} information from blockchain...", netuid);
+        }
 
         // Debug: Let's see what the storage key looks like
         let storage_key: String = self.encode_bittensor_storage_key("SubnetworkN", &[netuid]);
-        println!("🐛 DEBUG: Storage key for SubnetworkN[{}]: {}", netuid, storage_key);
+        //println!("🐛 DEBUG: Storage key for SubnetworkN[{}]: {}", netuid, storage_key);
 
         // Try to get network parameters. If any core parameter doesn't exist, subnet doesn't exist.
         // Start with SubnetworkN which should exist for any active subnet
         let subnetwork_n_raw = self.get_bittensor_storage("SubnetworkN", &[netuid]).await?;
-        println!("🐛 DEBUG: Raw storage result: {:?}", subnetwork_n_raw);
+        //println!("🐛 DEBUG: Raw storage result: {:?}", subnetwork_n_raw);
         
         if subnetwork_n_raw.is_none() {
             // Let's also try to get the total subnet count to see if we can get any storage at all
             let total_networks_key = self.encode_bittensor_storage_key("TotalNetworks", &[]);
-            println!("🐛 DEBUG: Trying TotalNetworks storage key: {}", total_networks_key);
+            //println!("🐛 DEBUG: Trying TotalNetworks storage key: {}", total_networks_key);
             let total_networks = self.get_bittensor_storage("TotalNetworks", &[]).await?;
-            println!("🐛 DEBUG: TotalNetworks result: {:?}", total_networks);
-            
+            //println!("🐛 DEBUG: TotalNetworks result: {:?}", total_networks);
+
             if let Some(total_bytes) = total_networks {
                 let total = u16::from_le_bytes([total_bytes[0], total_bytes[1]]);
                 return Err(anyhow!(
@@ -214,14 +222,24 @@ impl BittensorClient {
 
         let current_block = self.get_current_block().await?;
  
-        println!("📋 Subnet {} info retrieved:", netuid);
-        println!("   Difficulty: {}", difficulty);
-        println!("   Tempo: {}", tempo);
-        println!("   Immunity period: {}", immunity_period);
-        println!("   Min allowed weights: {}", min_allowed_weights);
-        println!("   Registration burn: {} RAO", burn);
-        println!("   Registered neurons: {}", subnetwork_n);
-        println!("   Current block: {}", current_block);
+        if show_info {
+            println!("📋 Subnet {} info retrieved:", netuid);
+            println!("   Difficulty: {}", difficulty);
+            println!("   Tempo: {}", tempo);
+            println!("   Immunity period: {}", immunity_period);
+            println!("   Min allowed weights: {}", min_allowed_weights);
+            println!("   Registration burn: {} RAO", burn);
+            println!("   Registered neurons: {}", subnetwork_n);
+            println!("   Current block: {}", current_block);
+            println!("   Owner: {}", owner_ss58);
+            println!("🐛 DEBUG: Full owner address: {}", owner_ss58);
+            
+            // Debug: Test account info with the subnet owner (known to exist)
+            println!("🐛 DEBUG: Testing account info with subnet owner...");
+            if let Err(e) = self.debug_account_info(&owner_account).await {
+                println!("🐛 DEBUG: Account info test failed: {}", e);
+            }
+        }
  
         Ok(SubnetInfo {
             netuid,
@@ -405,7 +423,6 @@ impl BittensorClient {
     }
 
     // Checking neuron registration
-    // Checking neuron registration
     pub async fn check_registration(&self, netuid: u16, hotkey: &AccountId32) -> Result<Option<NeuronInfo>> {
         println!("🔍 Checking registration status for hotkey: {}", hotkey);
 
@@ -533,7 +550,7 @@ impl BittensorClient {
         let _block_hash = self.get_block_hash(None).await?;
         
         // Creating signed extra
-        let extra = self.create_signed_extra(account_info.nonce, current_block)?;
+        let extra = self.create_signed_extra(account_info.nonce as u64, current_block)?;
         
         // Creating payload for signing
         let mut payload = Vec::new();
@@ -658,42 +675,206 @@ impl BittensorClient {
     // Getting account balance
     pub async fn get_account_balance(&self, account: &AccountId32) -> Result<u64> {
         let account_info = self.get_account_info(account).await?;
-        Ok(account_info.data.free)
+        Ok(account_info.data.free as u64)
     }
     
     async fn get_account_info(&self, account: &AccountId32) -> Result<AccountInfo> {
-        let params = rpc_params![
-            "System",
-            "Account", 
-            account.to_ss58check()
-        ];
+        // Create storage key for System::Account
+        let storage_key = self.encode_system_account_storage_key(account);
+        let result: Option<String> = match self.client
+            .request("state_getStorage", rpc_params![storage_key])
+            .await
+        {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to get account info: {}", e));
+            }
+        };
+
+        if let Some(hex_data) = result {
+            let bytes = hex::decode(&hex_data[2..])
+                .context("Invalid hex data in account info")?;
+                
+            // Use proper SCALE decoding
+            match AccountInfo::decode(&mut &bytes[..]) {
+                Ok(account_info) => {
+                    Ok(account_info)
+                }
+                Err(e) => {
+                    // Manual parsing following Python Bittensor approach
+                    // AccountInfo structure: nonce(4) + consumers(4) + providers(4) + sufficients(4) + AccountData(40)
+                    // AccountData structure: free(16) + reserved(16) + frozen(8) + flags(8) = 48 bytes
+                    // But we're seeing 56 bytes total, so AccountData is actually 40 bytes: free(16) + reserved(16) + frozen(8)
+                    if bytes.len() >= 56 {
+                        // Parse AccountInfo fields (first 16 bytes)
+                        let nonce = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        let consumers = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+                        let providers = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+                        let sufficients = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+                        
+                        // Parse AccountData fields (next 40 bytes, starting at byte 16)
+                        // AccountData: free(16) + reserved(16) + misc_frozen(8) + fee_frozen(8) = 48 bytes
+                        // But actual data shows 40 bytes, so structure might be: free(16) + reserved(16) + frozen_data(8)
+                        
+                        // Free balance (bytes 16-31: 16 bytes for u128)
+                        let free_bytes = &bytes[16..32];
+                        let free = u128::from_le_bytes([
+                            free_bytes[0], free_bytes[1], free_bytes[2], free_bytes[3],
+                            free_bytes[4], free_bytes[5], free_bytes[6], free_bytes[7],
+                            free_bytes[8], free_bytes[9], free_bytes[10], free_bytes[11],
+                            free_bytes[12], free_bytes[13], free_bytes[14], free_bytes[15]
+                        ]);
+                        
+                        // Reserved balance (bytes 32-47: 16 bytes for u128)
+                        let reserved = if bytes.len() >= 48 {
+                            let reserved_bytes = &bytes[32..48];
+                            u128::from_le_bytes([
+                                reserved_bytes[0], reserved_bytes[1], reserved_bytes[2], reserved_bytes[3],
+                                reserved_bytes[4], reserved_bytes[5], reserved_bytes[6], reserved_bytes[7],
+                                reserved_bytes[8], reserved_bytes[9], reserved_bytes[10], reserved_bytes[11],
+                                reserved_bytes[12], reserved_bytes[13], reserved_bytes[14], reserved_bytes[15]
+                            ])
+                        } else {
+                            0u128
+                        };
+                        
+                        // Frozen balances - in modern Substrate this is a single "frozen" field
+                        // and flags field (ExtraFlags) - let's parse what we have
+                        let (frozen, flags) = if bytes.len() >= 56 {
+                            // The remaining 8 bytes might be compressed or represent flags
+                            // Try to parse as single u64 frozen amount
+                            let remaining_bytes = &bytes[48..56];
+                            let frozen_u64 = u64::from_le_bytes([
+                                remaining_bytes[0], remaining_bytes[1], remaining_bytes[2], remaining_bytes[3],
+                                remaining_bytes[4], remaining_bytes[5], remaining_bytes[6], remaining_bytes[7]
+                            ]);
+                            
+                            // Convert to u128 for consistency
+                            let frozen = frozen_u64 as u128;
+                            let flags = 0u128; // Default flags
+                            
+                            (frozen, flags)
+                        } else {
+                            (0u128, 0u128)
+                        };
+                        
+                       Ok(AccountInfo {
+                            nonce,
+                            consumers,
+                            providers,
+                            sufficients,
+                            data: AccountData {
+                                free,
+                                reserved,
+                                frozen,
+                                flags,
+                            },
+                        })
+                    } else {
+                        Ok(AccountInfo {
+                            nonce: 0,
+                            consumers: 0,
+                            providers: 0,
+                            sufficients: 0,
+                            data: AccountData {
+                                free: 0,
+                                reserved: 0,
+                                frozen: 0,
+                                flags: 0,
+                            },
+                        })
+                    }
+                }
+            }
+        } else {
+            // Account doesn't exist
+            Ok(AccountInfo {
+                nonce: 0,
+                consumers: 0,
+                providers: 0,
+                sufficients: 0,
+                data: AccountData {
+                    free: 0,
+                    reserved: 0,
+                    frozen: 0,
+                    flags: 0,
+                },
+            })
+        }
+    }
+
+    // Helper function to encode System::Account storage key
+    fn encode_system_account_storage_key(&self, account: &AccountId32) -> String {
+        use sp_core::{twox_128, blake2_128};
         
-        let result: Option<serde_json::Value> = self.client
-            .request("state_getStorage", params)
+        // System pallet hash
+        let pallet_hash = twox_128(b"System");
+        
+        // Account storage hash  
+        let storage_hash = twox_128(b"Account");
+        
+        // For System::Account, Substrate uses Blake2_128Concat hasher
+        // This means: blake2_128(key) + key
+        let account_hash = blake2_128(account.as_ref());
+        
+        let mut final_key = Vec::new();
+        final_key.extend_from_slice(&pallet_hash);      // 16 bytes
+        final_key.extend_from_slice(&storage_hash);     // 16 bytes  
+        final_key.extend_from_slice(&account_hash);     // 16 bytes
+        final_key.extend_from_slice(account.as_ref());  // 32 bytes
+        
+        format!("0x{}", hex::encode(final_key))
+    }
+
+    // Debug function to test account info with known accounts
+    pub async fn debug_account_info(&self, account: &AccountId32) -> Result<()> {
+        println!("🐛 DEBUG: Testing account info for: {}", account.to_ss58check());
+        
+        // First test the raw storage access
+        let storage_key = self.encode_system_account_storage_key(account);
+        println!("🐛 DEBUG: Storage key: {}", storage_key);
+        println!("🐛 DEBUG: Storage key length: {} bytes", (storage_key.len() - 2) / 2);
+        
+        let result: Option<String> = self.client
+            .request("state_getStorage", rpc_params![storage_key])
             .await
             .context("Failed to get account info")?;
             
-        if let Some(data) = result {
-            // Parsing account data (simplified version)
-            Ok(AccountInfo {
-                data: AccountData {
-                    free: data.get("free")
-                        .and_then(|v| v.as_str())
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(0),
-                    reserved: 0,
-                    frozen: 0,
-                },
-                nonce: data.get("nonce")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-            })
+        println!("🐛 DEBUG: Raw result: {:?}", result);
+        
+        if let Some(hex_data) = result {
+            println!("🐛 DEBUG: Hex data: {}", hex_data);
+            println!("🐛 DEBUG: Data length: {} bytes", (hex_data.len() - 2) / 2);
+            
+            let bytes = hex::decode(&hex_data[2..])
+                .context("Invalid hex data")?;
+            println!("🐛 DEBUG: Decoded bytes length: {}", bytes.len());
+            println!("🐛 DEBUG: First 20 bytes: {:?}", &bytes[..20.min(bytes.len())]);
+            
+            // Now test the account info parsing
+            println!("🐛 DEBUG: Testing get_account_info parsing...");
+            match self.get_account_info(account).await {
+                Ok(account_info) => {
+                    println!("🐛 DEBUG: ✅ Account info parsed successfully!");
+                    println!("🐛 DEBUG: Nonce: {}", account_info.nonce);
+                    println!("🐛 DEBUG: Consumers: {}", account_info.consumers);
+                    println!("🐛 DEBUG: Providers: {}", account_info.providers);
+                    println!("🐛 DEBUG: Sufficients: {}", account_info.sufficients);
+                    println!("🐛 DEBUG: Free balance: {} RAO", account_info.data.free);
+                    println!("🐛 DEBUG: Free balance: {:.6} TAO", account_info.data.free as f64 / 1_000_000_000.0);
+                    println!("🐛 DEBUG: Reserved: {} RAO", account_info.data.reserved);
+                    println!("🐛 DEBUG: Frozen balance: {} RAO", account_info.data.frozen);
+                    println!("🐛 DEBUG: Flags: {:#x}", account_info.data.flags);
+                }
+                Err(e) => {
+                    println!("🐛 DEBUG: ❌ Failed to parse account info: {}", e);
+                }
+            }
         } else {
-            Ok(AccountInfo {
-                data: AccountData { free: 0, reserved: 0, frozen: 0 },
-                nonce: 0,
-            })
+            println!("🐛 DEBUG: No data returned - account doesn't exist or wrong storage key");
         }
+        
+        Ok(())
     }
 
     // Sending burned registration
@@ -752,8 +933,8 @@ mod tests {
             burn_amount: 12345,
             block_number: 67890,
         };
- 
-        // Тест сериализации
+
+        // Serialization test
         let json = serde_json::to_string(&registration);
         assert!(json.is_ok());
     }
