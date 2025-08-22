@@ -4,15 +4,13 @@ on:
   push:
     tags:
       - 'v*'
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
-
-env:
-  CARGO_TERM_COLOR: always
 
 permissions:
   contents: write
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   build:
