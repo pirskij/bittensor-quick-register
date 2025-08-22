@@ -10,4 +10,3 @@ pub const REGISTER_CALL_INDEX: u8 = 0;
 pub const BURNED_REGISTER_CALL_INDEX: u8 = 1;
 pub const DEFAULT_BLOCK_TIME: u64 = 12; // seconds
 pub const TAO_DECIMALS: u32 = 9;
-pub const RAO_PER_TAO: u64 = 1_000_000_000;

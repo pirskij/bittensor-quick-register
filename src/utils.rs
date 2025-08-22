@@ -4,10 +4,9 @@ use sp_core::{
     U256,
 };
 use std::time::Duration;
-use crate::constants::RAO_PER_TAO;
 
-pub fn format_tao(rao: u64) -> String {
-    let tao = rao as f64 / RAO_PER_TAO as f64;
+pub fn format_tao(rao: u128) -> String {
+    let tao = rao as f64 / 1_000_000_000 as f64;
     if tao >= 1000.0 {
         format!("{:.1}K TAO", tao / 1000.0)
     } else if tao >= 1.0 {
@@ -39,7 +38,7 @@ pub fn format_account_short(account: &AccountId32) -> String {
 
 pub fn format_ss58_short(ss58: &str) -> String {
     if ss58.len() > 16 {
-        format!("{}...{}", &ss58[..8], &ss58[ss58.len()-8..])
+        format!("{}...{}", &ss58[..8], &ss58[ss58.len() - 8..])
     } else {
         ss58.to_string()
     }
@@ -64,13 +63,13 @@ pub fn format_difficulty(difficulty: U256) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_utils() {
         assert_eq!(format_tao(1_000_000_000), "1.000 TAO");
         assert_eq!(format_tao(500_000_000), "500.0M RAO");
         assert_eq!(format_tao(1000), "1.0K RAO");
-        
+
         let hash_rate = format_hash_rate(50000, Duration::from_secs(10));
         assert!(hash_rate.contains("KH/s"));
     }
